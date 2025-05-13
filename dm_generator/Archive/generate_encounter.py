@@ -1,0 +1,367 @@
+# file: generate_encounter.py
+
+import argparse
+import json
+import random
+import re
+from pathlib import Path
+from typing import List
+from datetime import datetime
+
+THEME_PACKS = {
+    "undead": {
+        "adjectives": ["Withered", "Silent", "Restless", "Haunted", "Rotting", "Graveborn", "Bonebound"],
+        "nouns": ["Crypt", "Wraith", "Grave", "Tomb", "Necromancer", "Ghoul", "Husk"],
+        "verbs": ["Hungers", "Rises", "Whispers", "Waits", "Returns"],
+        "titles": ["Lich", "Revenant", "Wight", "Specter"],
+        "places": ["Grave", "Dust", "Barrow", "Mire", "Fog"]
+    },
+    "underdark": {
+        "adjectives": ["Twisted", "Chittering", "Venomous", "Sunless", "Fungal"],
+        "nouns": ["Cavern", "Spider", "Myconid", "Pit", "Depths"],
+        "verbs": ["Crawls", "Echoes", "Lurks", "Sleeps"],
+        "titles": ["Matron", "Webspinner", "Drider", "Watcher"],
+        "places": ["Abyss", "Chasm", "Spire", "Blackweb"]
+    },
+    "fey": {
+        "adjectives": ["Glittering", "Laughing", "Changeling", "Petal-Touched", "Moonlit", "Sylvan"],
+        "nouns": ["Glen", "Thorn", "Revel", "Trickster", "Queen"],
+        "verbs": ["Dances", "Sings", "Mocks", "Flees"],
+        "titles": ["Pixie", "Dryad", "Archfey", "Hornsinger"],
+        "places": ["Twilight", "Bloom", "Willow", "Grove"]
+    },
+    "infernal": {
+        "adjectives": ["Burning", "Cruel", "Hellbound", "Ashen", "Flamekissed", "Doomed"],
+        "nouns": ["Pit", "Fiend", "Oath", "Scourge", "Flame"],
+        "verbs": ["Burns", "Consumes", "Torments", "Commands"],
+        "titles": ["Devil", "Hellknight", "Archduke", "Brandbearer"],
+        "places": ["Hell", "Chains", "Ashes", "Embers"]
+    },
+    "wilderness": {
+        "adjectives": ["Ravenous", "Stalking", "Wild", "Mossy", "Feral", "Echoing"],
+        "nouns": ["Beast", "Pack", "Thicket", "Trail", "Alpha"],
+        "verbs": ["Hungers", "Tracks", "Prowls", "Calls"],
+        "titles": ["Hunter", "Stalker", "Fanglord", "Howler"],
+        "places": ["Hollow", "Woods", "Ridge", "Grove"]
+    },
+    "arcane": {
+        "adjectives": ["Mystic", "Forbidden", "Runic", "Aetheric", "Eldritch"],
+        "nouns": ["Sigil", "Mage", "Ritual", "Scroll", "Construct"],
+        "verbs": ["Unravels", "Binds", "Channels", "Whispers"],
+        "titles": ["Archmage", "Seer", "Binder", "Loremaster"],
+        "places": ["Sanctum", "Spire", "Vault", "Veil"]
+    }
+}
+
+CR_XP = {
+    "0": 10, "1/8": 25, "1/4": 50, "1/2": 100,
+    "1": 200, "2": 450, "3": 700, "4": 1100, "5": 1800,
+    "6": 2300, "7": 2900, "8": 3900, "9": 5000,
+    "10": 5900, "11": 7200, "12": 8400, "13": 10000,
+    "14": 11500, "15": 13000, "16": 15000, "17": 18000,
+    "18": 20000, "19": 22000, "20": 25000
+}
+
+XP_THRESHOLDS = {
+    1:  [25, 50, 75, 100],
+    2:  [50, 100, 150, 200],
+    3:  [75, 150, 225, 400],
+    4:  [125, 250, 375, 500],
+    5:  [250, 500, 750, 1100],
+    6:  [300, 600, 900, 1400],
+    7:  [350, 750, 1100, 1700],
+    8:  [450, 900, 1400, 2100],
+    9:  [550, 1100, 1600, 2400],
+    10: [600, 1200, 1900, 2800],
+    11: [800, 1600, 2400, 3600],
+    12: [1000, 2000, 3000, 4500],
+    13: [1100, 2200, 3400, 5100],
+    14: [1250, 2500, 3800, 5700],
+    15: [1400, 2800, 4300, 6400],
+    16: [1600, 3200, 4800, 7200],
+    17: [2000, 3900, 5900, 8800],
+    18: [2100, 4200, 6300, 9500],
+    19: [2400, 4900, 7300, 10900],
+    20: [2800, 5700, 8500, 12700]
+}
+
+
+def load_party():
+    with open("party.json") as f:
+        return json.load(f)
+
+
+def load_bestiary():
+    with open("bestiary-mm.json") as f:
+        return json.load(f)["monster"]
+
+
+def get_xp_threshold(level: int, count: int, difficulty: str) -> int:
+    index = {"easy": 0, "medium": 1, "hard": 2, "deadly": 3}[difficulty]
+    return XP_THRESHOLDS[level][index] * count
+
+
+def normalize_cr(cr_field):
+    if isinstance(cr_field, str):
+        return cr_field
+    elif isinstance(cr_field, dict):
+        return str(cr_field.get("value", "0"))
+    return "0"
+
+
+def build_encounter(monsters: List[dict], budget: int, main_quest: bool) -> List[dict]:
+    pool = []
+    for m in monsters:
+        cr_str = normalize_cr(m.get("cr"))
+        xp = CR_XP.get(cr_str)
+        if xp:
+            m["_cr_str"] = cr_str
+            pool.append((m, xp))
+
+    random.shuffle(pool)
+    encounter = []
+
+    if main_quest:
+        pool.sort(key=lambda x: x[1], reverse=True)
+        for m, xp in pool:
+            if xp <= budget * 0.7:
+                encounter.append(m)
+                budget -= xp
+                break
+        random.shuffle(pool)
+
+    total = sum(CR_XP[m["_cr_str"]] for m in encounter)
+    for m, xp in pool:
+        if m not in encounter and total + xp <= budget:
+            encounter.append(m)
+            total += xp
+        if total >= budget * 0.9:
+            break
+    return encounter
+
+
+def random_encounter_name(theme="any"):
+    if theme != "any" and theme not in THEME_PACKS:
+        print(f"⚠️ Unknown theme '{theme}', using random theme.")
+        theme = "any"
+
+    pack = (
+        THEME_PACKS[theme]
+        if theme != "any"
+        else random.choice(list(THEME_PACKS.values()))
+    )
+
+    patterns = [
+        lambda p: f"The {random.choice(p['adjectives'])} {random.choice(p['nouns'])}",
+        lambda p: f"{random.choice(p['nouns'])} of the {random.choice(p['adjectives'])} {random.choice(p['nouns'])}",
+        lambda p: f"The {random.choice(p['nouns'])} That {random.choice(p['verbs'])}",
+        lambda p: f"The {random.choice(p['titles'])} of {random.choice(p['places'])}"
+    ]
+
+    return random.choice(patterns)(pack)
+
+def generate_story(encounter, monsters):
+    name = encounter['name']
+    environment = encounter['environment']
+    quest_type = encounter['type']
+    monster_names = [m['name'] for m in monsters]
+
+    scene_templates = [
+        "Shadows twist unnaturally across the {env}, hiding more than just silence.",
+        "An oppressive stillness clings to the {env}. Something is watching.",
+        "The scent of blood or old magic hangs thick in the {env}.",
+        "The wind dies as the party approaches the {env} — and so do the birdsong.",
+        "Even the bravest tracker loses the trail in the cursed mists of this {env}.",
+        "Locals speak of strange disappearances in the {env}. The ground here remembers.",
+        "You step into the {env}, where the air is wrong, the trees whisper, and every instinct screams to turn back."
+    ]
+
+    hero_hooks_main = [
+        "Rumors of ancient power buried here sent the party forth — but nothing prepared them for this.",
+        "Signs of dark rituals drew their attention, and fate rewarded their curiosity.",
+        "A noble's child vanished near this place. The party followed bloodstained tracks into the unknown.",
+        "Their mission was simple: investigate, retrieve, report. But the ground itself defies obedience."
+    ]
+
+    hero_hooks_side = [
+        "They were just passing through, but the world had other ideas.",
+        "What began as a shortcut turned into something much darker.",
+        "A glint of treasure in the mud. A broken sword in the path. The first warnings were ignored.",
+        "They camped here — once. And something remembered."
+    ]
+
+    monster_goals = [
+        "These creatures serve something older than reason. The party is merely in the way.",
+        "They hunger, and their hunger has purpose.",
+        "They defend sacred ground, twisted by time and blood.",
+        "A pact binds them here — and the arrival of outsiders threatens it.",
+        "They've waited for heroes to come. This was always meant to happen.",
+        "They’re gathering something. Souls, relics, memories — it’s unclear. But you’re interfering.",
+        "You weren't expected — but they know what to do with intruders.",
+        "The monsters think the heroes are part of the ritual. They might be right."
+    ]
+
+    scene = random.choice(scene_templates).replace("{env}", environment.lower())
+    hero_motive = random.choice(hero_hooks_main if quest_type == "main" else hero_hooks_side)
+    monster_motive = random.choice(monster_goals)
+
+    story = (
+        f"### Encounter Background: *{name}*\n\n"
+        f"**Scene:** {scene}\n\n"
+        f"**Why the heroes are here:** {hero_motive}\n\n"
+        f"**Why the monsters fight:** {monster_motive}\n\n"
+        f"Monsters involved: {', '.join(monster_names)}\n"
+    )
+
+    return story
+
+def slugify(name: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+
+
+def get_monster_links(vault_path: Path) -> dict:
+    links = {}
+    for md_file in vault_path.rglob("*.md"):
+        key = md_file.stem.replace('-', ' ').lower()
+        slug = md_file.stem
+        links[key] = slug
+    return links
+
+
+def write_markdown(encounter, monsters, monster_links):
+    now = datetime.now().strftime("%Y-%m-%d")
+    safe_name = encounter["name"].replace(" ", "_").replace("/", "_")
+    filename = f"{now}_{safe_name}.md"
+
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("---\n")
+        f.write(f"title: {encounter['name']}\n")
+        f.write(f"type: {encounter['type'].title()} Quest\n")
+        f.write(f"environment: {encounter['environment'].title()}\n")
+        f.write(f"date: {now}\n")
+        f.write("tags: [encounter, dnd5e]\n")
+        f.write("obsidianUIMode: preview\n")
+        f.write("cssclasses: json5e-monster\n")
+        sources = [m.get('source', '?') for m in monsters]
+        f.write(f"sources: {', '.join(sources)}\n")
+        f.write("---\n\n")
+
+        f.write(f"# {encounter['name']}\n\n")
+        story = generate_story(encounter, monsters)
+        f.write(story + "\n")
+
+        f.write("| Monster | CR | HP | Dead |\n")
+        f.write("|:--------|:--:|:--:|:----:|\n")
+
+        for monster in monsters:
+            name_key = monster["name"].lower()
+            slug = monster_links.get(name_key)
+            alias_escaped = monster["name"].replace("|", "\\|")
+            if slug:
+                monster_link = f"[[{slug}\\|{alias_escaped}]]"
+            else:
+                monster_link = f"[[{alias_escaped}]]"
+
+            cr = normalize_cr(monster.get("cr"))
+            hp = monster.get("hp", "?")
+            if isinstance(hp, dict):
+                hp = hp.get("average", "?")
+
+            f.write(f"| {monster_link} | {cr} | {hp} | [ ] |\n")
+
+    print(f"\nSaved encounter to {filename}")
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate a D&D encounter based on party details and preferences.")
+    
+    # Add flags for main quest, theme, and environment with descriptions.
+    parser.add_argument("--theme", type=str, choices=["undead", "underdark", "fey", "infernal", "wilderness", "arcane", "any"],
+                        help="Theme of the encounter.")
+    parser.add_argument("--difficulty", type=str, choices=["easy", "medium", "hard", "deadly"],
+                        help="Difficulty of the encounter.")
+    parser.add_argument("--environment", type=str,
+                        help="Location/environment of the encounter (e.g., forest, cave, desert).")
+    parser.add_argument("--main-quest", action="store_true", help="Flag to specify if it's a main quest.")
+    
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    vault_path = Path(r"\\svgkomm.svgdrift.no\Users\sk5049835\Documents\Notater\Obsidian\DM")
+    monster_links = get_monster_links(vault_path)
+
+    while True:
+        party = load_party()
+        bestiary = load_bestiary()
+
+        level = int(party['members'][0]['level'])
+        count = len(party['members'])
+
+        # --- Determine difficulty ---
+        difficulty = args.difficulty or ("deadly" if args.main_quest else "medium")
+        quest_type = "main" if args.main_quest else input("Is this a main quest or a side quest? ").strip().lower()
+
+        # --- Determine theme ---
+        if args.theme:
+            theme = args.theme
+        else:
+            theme_input = input("Does the encounter have a theme? (y/n): ").strip().lower()
+            if theme_input == "y":
+                print("Available themes: undead, underdark, fey, infernal, wilderness, arcane, any")
+                theme = input("Enter theme: ").strip().lower()
+            else:
+                theme = "any"
+
+        # --- Determine environment ---
+        if args.environment:
+            env_input = args.environment
+        else:
+            env_input = input("Where will the heroes fight? ").strip().lower()
+
+        # Filter matching monsters based on environment
+        matching = [m for m in bestiary if env_input in [e.lower() for e in m.get("environment", [])]]
+
+        if not matching:
+            all_envs = set(e for m in bestiary for e in m.get("environment", []))
+            print("\nThere are no monsters in this location.")
+            print("Available environments:")
+            for env in sorted(all_envs):
+                print(f" - {env}")
+            continue
+
+        # Build encounter based on matched monsters
+        budget = get_xp_threshold(level, count, difficulty)
+        selected = build_encounter(matching, budget, quest_type == "main")
+        encounter = {
+            "name": random_encounter_name(theme),
+            "type": quest_type,
+            "environment": env_input,
+        }
+
+        # Display the encounter to the user
+        print(f"\n== Encounter Generated ==")
+        print(f"Name: {encounter['name']}")
+        print(f"Type: {encounter['type']}")
+        print(f"Environment: {encounter['environment']}")
+        print("Monsters:")
+        for m in selected:
+            print(f" - {m['name']} (CR {m.get('_cr_str', normalize_cr(m.get('cr')))})")
+
+        # Ask if the user wants to save, create new, or exit
+        choice = input("\nDo you want to save this encounter or create a new one? (save/new/exit): ").strip().lower()
+        if choice == "save":
+            write_markdown(encounter, selected, monster_links)
+            break
+        elif choice == "new":
+            continue
+        elif choice == "exit":
+            print("Exiting without saving.")
+            break
+        else:
+            print("Invalid input. Please enter 'save', 'new', or 'exit'.")
+            continue
+
+if __name__ == "__main__":
+    main()
