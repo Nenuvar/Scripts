@@ -1,0 +1,23 @@
+{
+  "party_name": "Dragon Devourers",
+  "members": [
+    {
+      "name": "Johnny Bravo",
+      "race": "Dwarf",
+      "class": "Cleric",
+      "level": "3"
+    },
+    {
+      "name": "Elaysey",
+      "race": "Giant",
+      "class": "Barbarian",
+      "level": "3"
+    },
+    {
+      "name": "Luca Deluca",
+      "race": "Fairy",
+      "class": "Bard",
+      "level": "3"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "The Cursed Vault",
+  "type": "side",
+  "environment": "forest",
+  "monsters": [
+    {
+      "name": "Giant Spider",
+      "cr": "1",
+      "environment": [
+        "underdark",
+        "forest",
+        "swamp",
+        "urban",
+        "desert"
+      ]
+    },
+    {
+      "name": "Wolf",
+      "cr": "1/4",
+      "environment": [
+        "grassland",
+        "forest",
+        "hill"
+      ]
+    },
+    {
+      "name": "Dire Wolf",
+      "cr": "1",
+      "environment": [
+        "forest",
+        "hill"
+      ]
+    }
+  ]
+}
